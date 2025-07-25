@@ -49,6 +49,13 @@ category_col = next((col for col in df.columns if "category" in col.lower()), No
 date_col = next((col for col in df.columns if "date" in col.lower()), None)
 desc_col = next((col for col in df.columns if "desc" in col.lower() or "text" in col.lower()), None)
 
+# Nach dem Laden der CSV
+if date_col and date_col in df.columns:
+    try:
+        df[date_col] = pd.to_datetime(df[date_col])
+    except:
+        st.warning(f"Spalte '{date_col}' konnte nicht als Datum interpretiert werden.")
+
 # ------------------ Tabellenansicht ------------------
 st.subheader("📋 Datenübersicht")
 st.dataframe(df, use_container_width=True)
@@ -67,7 +74,38 @@ if amount_col:
     col3.metric("Ausgaben", f"{expense:.2f} €")
 
     # Diagramm: Ausgaben nach Kategorie
-    if category_col:
+    # ------------------ Filter (falls Kategorie oder Datum vorhanden) ------------------
+    if category_col or date_col:
+        st.sidebar.header("🔍 Filter")
+
+        df_filter = df.copy()
+
+        if category_col:
+            categories = df[category_col].dropna().unique()
+            selected_cats = st.sidebar.multiselect(
+                "Kategorie",
+                options=categories,
+                default=categories
+            )
+            if selected_cats:
+                df_filter = df_filter[df_filter[category_col].isin(selected_cats)]
+
+        if date_col and pd.api.types.is_datetime64_any_dtype(df[date_col]):
+            min_date = df[date_col].min().to_pydatetime()
+            max_date = df[date_col].max().to_pydatetime()
+            start, end = st.sidebar.date_input(
+                "Zeitraum",
+                value=(min_date, max_date),
+                min_value=min_date,
+                max_value=max_date
+            )
+            if start and end:
+                mask = (df_filter[date_col] >= pd.Timestamp(start)) & (df_filter[date_col] <= pd.Timestamp(end))
+                df_filter = df_filter[mask]
+
+        st.subheader("📋 Gefilterte Daten")
+        st.dataframe(df_filter, use_container_width=True)
+        df = df_filter  # Weiterverarbeitung mit gefilterten Daten
         st.subheader("📊 Ausgaben nach Kategorie")
         expenses = df[df[amount_col] < 0].copy()
         expenses["Kategorie"] = expenses[category_col].fillna("Unkategorisiert")
@@ -79,6 +117,22 @@ if amount_col:
             title="Ausgabenverteilung"
         )
         st.plotly_chart(fig, use_container_width=True)
+
+# ------------------ Zeitverlauf (falls Datum erkannt) ------------------
+if date_col and amount_col:
+    st.subheader("📈 Einnahmen/Ausgaben im Zeitverlauf")
+    df_timeline = df[[date_col, amount_col]].copy()
+    df_timeline = df_timeline.dropna()
+    df_timeline = df_timeline.set_index(date_col).resample("D").sum().reset_index()
+
+    fig2 = px.line(
+        df_timeline,
+        x=date_col,
+        y=amount_col,
+        title="Tägliche Transaktionen",
+        labels={"amount": "Betrag (€)", "date": "Datum"}
+    )
+    st.plotly_chart(fig2, use_container_width=True)
 
 # ------------------ Export-Option ------------------
 st.subheader("📤 Export")
